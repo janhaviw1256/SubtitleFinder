@@ -3,9 +3,19 @@
   "name": "Subtitle Finder",
   "version": "0.1.0",
   "description": "Find matching subtitles for videos playing in your browser.",
+
+  "host_permissions": [
+    "http://localhost:3000/*"
+  ],
+
+  "background": {
+    "service_worker": "background.js"
+  },
+
   "action": {
     "default_title": "Subtitle Finder"
   },
+
   "content_scripts": [
     {
       "matches": [

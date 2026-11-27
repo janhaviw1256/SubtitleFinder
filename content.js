@@ -1,8 +1,6 @@
-
 console.log("Subtitle Finder is active!");
 
 const detectedVideos = new WeakSet();
-
 
 // Extract structured data embedded in the webpage
 function extractJsonLd() {
@@ -66,9 +64,13 @@ function extractJsonLd() {
 
 // Extract useful information from the webpage
 function extractPageMetadata() {
+
     const metadata = {
         pageTitle: document.title,
         pageURL: window.location.href,
+
+        // Extract title, ID and media type from URL parameters
+        urlMetadata: extractUrlMetadata(),
 
         description:
             document.querySelector('meta[name="description"]')
@@ -96,7 +98,7 @@ function extractPageMetadata() {
         },
 
         headings: Array.from(
-        document.querySelectorAll("h1")
+            document.querySelectorAll("h1")
         ).map(heading => heading.innerText.trim()).filter(Boolean),
 
         structuredData: extractJsonLd()
@@ -104,7 +106,6 @@ function extractPageMetadata() {
 
     return metadata;
 }
-
 
 
 function extractPlayerContext(video) {
@@ -131,12 +132,11 @@ function extractPlayerContext(video) {
             currentElement.querySelectorAll("a")
         )
         .map(link => ({
-        text: link.innerText.trim(),
-        href: link.href,
-        title: link.getAttribute("title") || ""
+            text: link.innerText.trim(),
+            href: link.href,
+            title: link.getAttribute("title") || ""
         }))
         .filter(link => link.text || link.title);
-
 
         // Extract visible text
         const text = (currentElement.innerText || "")
@@ -146,9 +146,7 @@ function extractPlayerContext(video) {
 
         context.push({
             level: level,
-
             tagName: currentElement.tagName,
-
             id: currentElement.id || "",
 
             className:
@@ -163,9 +161,7 @@ function extractPlayerContext(video) {
                 currentElement.getAttribute("aria-label") || "",
 
             headings: [...new Set(headings)],
-
             links: [...new Set(links)],
-
             text: text
         });
 
@@ -175,11 +171,9 @@ function extractPlayerContext(video) {
     return context;
 }
 
-
 function extractTitleCandidates(metadata) {
     const candidates = [];
 
-    // Common generic titles that are unlikely to identify a movie
     const genericTitles = [
         "home",
         "watch now",
@@ -187,10 +181,13 @@ function extractTitleCandidates(metadata) {
         "video",
         "html video",
         "untitled",
-        "index"
+        "index",
+        "example",
+        "player",
+        "result",
+        "more tutorials",
+        "get certified"
     ];
-
-    // Check whether a title is useful
     function isGenericTitle(title) {
         const cleaned = title.trim().toLowerCase();
 
@@ -202,7 +199,6 @@ function extractTitleCandidates(metadata) {
             return true;
         }
 
-        // Filter common tutorial/documentation headings
         if (
             /\b(tutorial|reference|exercises|documentation)\b/i
                 .test(cleaned)
@@ -213,7 +209,6 @@ function extractTitleCandidates(metadata) {
         return false;
     }
 
-    // Add a title while avoiding duplicates
     function addCandidate(title, source) {
         if (typeof title !== "string") {
             return;
@@ -256,10 +251,14 @@ function extractTitleCandidates(metadata) {
     // 4. Page title
     addCandidate(metadata.pageTitle, "pageTitle");
 
+    // 5. URL query parameters
+    addCandidate(
+        metadata.urlMetadata?.title,
+        "urlParameter"
+    );
 
     return candidates;
 }
-
 
 function extractPlayerLinks(playerContext) {
     const results = [];
@@ -282,6 +281,7 @@ function extractPlayerLinks(playerContext) {
 
             item.links.forEach(link => {
                 const text = link.text.trim();
+
                 const normalizedText = text
                     .toLowerCase()
                     .replace(/[^\p{L}\p{N}\s]/gu, "")
@@ -311,8 +311,6 @@ function extractPlayerLinks(playerContext) {
 
     return results;
 }
-
-
 
 function extractVideoUrlInfo(video) {
     const source = video.currentSrc || video.src;
@@ -349,7 +347,7 @@ function extractVideoUrlInfo(video) {
 
         // Clean filename separators
         const cleanedName = filenameWithoutExtension
-            .replace(/[._-]+/g, " ")
+            .replace(/[.\_-]+/g, " ")
             .replace(/\s+/g, " ")
             .trim();
 
@@ -405,7 +403,7 @@ function extractVideoUrlInfo(video) {
             const segment = pathSegments[i];
 
             const cleanedSegment = segment
-                .replace(/[._-]+/g, " ")
+                .replace(/[.\_-]+/g, " ")
                 .replace(/\s+/g, " ")
                 .trim();
 
@@ -459,12 +457,530 @@ function extractVideoUrlInfo(video) {
 }
 
 
+function extractUrlMetadata() {
+
+    const url = new URL(window.location.href);
+
+    // 1. Extract normal query parameters
+    const searchParams = url.searchParams;
+
+    // 2. Extract parameters from the URL hash
+    const hash = url.hash;
+
+    const hashContent = hash.startsWith("#")
+        ? hash.substring(1)
+        : hash;
+
+    const hashParams = new URLSearchParams(hashContent);
+
+    // Read a parameter from either location
+    function getParameter(name) {
+
+        const value = (
+            searchParams.get(name) ||
+            hashParams.get(name) ||
+            ""
+        ).trim();
+
+        // Reject invalid placeholder values
+        if (
+            ["false", "null", "undefined", "none"]
+                .includes(value.toLowerCase())
+        ) {
+            return "";
+        }
+
+        return value;
+    }
+
+    // 3. Extract information from the URL pathname
+    const pathSegments = url.pathname
+        .split("/")
+        .filter(Boolean)
+        .map(segment => {
+            try {
+                return decodeURIComponent(segment);
+            } catch {
+                return segment;
+            }
+        });
+
+    let pathId = "";
+    let pathType = "";
+    let pathSeason = "";
+    let pathEpisode = "";
+
+    // Look for movie or TV URL patterns
+    for (let i = 0; i < pathSegments.length; i++) {
+
+        const segment = pathSegments[i].toLowerCase();
+
+        if (
+            ["movie", "movies", "film"].includes(segment) &&
+            /^\d+$/.test(pathSegments[i + 1] || "")
+        ) {
+            pathType = "movie";
+            pathId = pathSegments[i + 1];
+            break;
+        }
+
+        if (
+            ["tv", "show", "shows", "series"].includes(segment) &&
+            /^\d+$/.test(pathSegments[i + 1] || "")
+        ) {
+            pathType = "tv";
+            pathId = pathSegments[i + 1];
+
+            // Check for season and episode information
+            for (let j = i + 2; j < pathSegments.length; j++) {
+
+                if (
+                    pathSegments[j].toLowerCase() === "season" &&
+                    /^\d+$/.test(pathSegments[j + 1] || "")
+                ) {
+                    pathSeason = pathSegments[j + 1];
+                }
+
+                if (
+                    pathSegments[j].toLowerCase() === "episode" &&
+                    /^\d+$/.test(pathSegments[j + 1] || "")
+                ) {
+                    pathEpisode = pathSegments[j + 1];
+                }
+            }
+
+            break;
+        }
+    }
+
+    // 4. Combine query parameters and pathname information
+    const id = getParameter("id") ||
+        getParameter("tmdb_id") ||
+        pathId;
+
+    const type = (
+        getParameter("type") ||
+        pathType
+    ).toLowerCase();
+
+    return {
+        title: getParameter("title"),
+        id: id,
+        type: type,
+
+        season: getParameter("season") || pathSeason,
+        episode: getParameter("episode") || pathEpisode,
+
+        source: getParameter("id") || getParameter("tmdb_id")
+            ? "queryParameter"
+            : pathId
+                ? "pathname"
+                : null
+    };
+}
+
+function normalizeEvidenceValue(value) {
+
+    return value
+        .normalize("NFKC")
+        .toLowerCase()
+        .replace(/[^\p{L}\p{N}]+/gu, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+}
+
+function deduplicateEvidence(evidence) {
+
+    const uniqueEvidence = new Map();
+
+    evidence.forEach(item => {
+
+        // Identifiers and titles must be handled separately
+        const key = `${item.type}:${normalizeEvidenceValue(item.value)}`;
+
+        if (!uniqueEvidence.has(key)) {
+
+            uniqueEvidence.set(key, {
+                ...item,
+                sources: [item.source]
+            });
+
+        } else {
+
+            const existing = uniqueEvidence.get(key);
+
+            // Keep track of all sources
+            if (!existing.sources.includes(item.source)) {
+                existing.sources.push(item.source);
+            }
+
+            // Retain the highest confidence
+            existing.confidence = Math.max(
+                existing.confidence,
+                item.confidence
+            );
+        }
+    });
+
+    return Array.from(uniqueEvidence.values());
+}
+
+function rankTitleEvidence(evidence) {
+
+    // Keep only title evidence
+    const titleEvidence = evidence.filter(item =>
+        item.type === "title"
+    );
+
+    // Calculate a score for each title
+    const rankedEvidence = titleEvidence.map(item => {
+
+        const sourceCount = item.sources.length;
+
+        // Give a small bonus for multiple supporting sources
+        const supportBonus = Math.min(
+            (sourceCount - 1) * 0.05,
+            0.15
+        );
+
+        const score = Math.min(
+            item.confidence + supportBonus,
+            1.0
+        );
+
+        return {
+            ...item,
+            supportBonus,
+            score
+        };
+    });
+
+    // Highest-scoring title comes first
+    rankedEvidence.sort((a, b) =>
+        b.score - a.score
+    );
+
+    return rankedEvidence;
+}
+
+function evaluateRankedEvidence(rankedEvidence) {
+
+    // 1. Check whether any title evidence exists
+    if (!rankedEvidence || rankedEvidence.length === 0) {
+        return {
+            status: "insufficient_information",
+            selectedCandidate: null,
+            alternatives: []
+        };
+    }
+
+    const bestCandidate = rankedEvidence[0];
+    const secondCandidate = rankedEvidence[1];
+
+    // 2. Check whether the strongest candidate has enough support
+    if (bestCandidate.score < 0.6) {
+        return {
+            status: "insufficient_information",
+            selectedCandidate: null,
+            alternatives: rankedEvidence
+        };
+    }
+
+    // 3. Check whether the top two candidates are too close
+    if (
+        secondCandidate &&
+        bestCandidate.score - secondCandidate.score < 0.1
+    ) {
+        return {
+            status: "ambiguous",
+            selectedCandidate: null,
+            alternatives: rankedEvidence
+        };
+    }
+
+    // 4. A promising candidate has been found
+    return {
+        status: "needs_verification",
+        selectedCandidate: bestCandidate,
+        alternatives: rankedEvidence.slice(1)
+    };
+}
+
+
+
+const EVIDENCE_SOURCE_WEIGHTS = {
+    structuredData: 0.95,
+    urlParameter: 0.95,
+    openGraph: 0.80,
+    playerHeading: 0.80,
+    twitter: 0.65,
+    playerLink: 0.65,
+    pageTitle: 0.50,
+    videoAsset: 0.55,
+    filename: 0.55
+};
+
+function collectEvidence(data) {
+
+    const evidence = [];
+
+    // Common website and player branding
+    const ignoredPhrases = [
+        "free video streaming",
+        "video streaming api",
+        "watch online",
+        "watch free",
+        "streaming platform",
+        "video player",
+        "embed player",
+        "home",
+        "login",
+        "sign in",
+        "register",
+        "subscribe",
+        "advertisement"
+    ];
+
+    // Technical identifiers that should not be movie titles
+    function isTechnicalIdentifier(value) {
+
+        const compact = value
+            .replace(/[\s-]/g, "");
+
+        // Reject UUIDs and long hexadecimal identifiers
+        if (/^[a-f0-9]{32,}$/i.test(compact)) {
+            return true;
+        }
+
+        // Reject purely numeric identifiers
+        if (/^\d+$/.test(value.trim())) {
+            return true;
+        }
+
+        return false;
+    }
+    // Check whether text looks like website branding
+    function isWebsiteNoise(value) {
+
+        const normalized = value
+            .toLowerCase()
+            .replace(/[^\p{L}\p{N}\s]/gu, " ")
+            .replace(/\s+/g, " ")
+            .trim();
+
+        if (!normalized) {
+            return true;
+        }
+
+        // Reject generic website and player labels
+        const ignoredExactPhrases = [
+            "player",
+            "video player",
+            "home",
+            "login",
+            "sign in",
+            "register",
+            "subscribe"
+        ];
+
+        if (ignoredExactPhrases.includes(normalized)) {
+            return true;
+        }
+
+        // Reject common player messages
+        if (
+            normalized.includes("this one won t play right now") ||
+            normalized.includes("video is unavailable") ||
+            normalized.includes("something went wrong") ||
+            normalized.includes("report it") ||
+            normalized.includes("discord gg")
+        ) {
+            return true;
+        }
+
+        // Reject existing ignored phrases
+        if (ignoredPhrases.some(phrase =>
+            normalized === phrase.toLowerCase()
+        )) {
+            return true;
+        }
+
+        // Reject known player/service branding
+        const hostname = window.location.hostname
+            .replace(/^www\./i, "")
+            .split(".")[0]
+            .toLowerCase();
+
+        if (
+            normalized === hostname ||
+            normalized.startsWith(hostname + " ")
+        ) {
+            return true;
+        }
+
+        return false;
+    }
+
+    // Add one piece of evidence in a standard format
+    function addEvidence(
+        value,
+        source,
+        confidence,
+        metadata = {}
+    ) {
+
+        if (
+            typeof value !== "string" ||
+            !value.trim()
+        ) {
+            return;
+        }
+
+        const cleanedValue = value.trim();
+
+        if (isTechnicalIdentifier(cleanedValue)) {
+            return;
+        }
+
+        if (isWebsiteNoise(cleanedValue)) {
+            return;
+        }
+
+        evidence.push({
+            value: cleanedValue,
+            type: "title",
+            source: source,
+            confidence: EVIDENCE_SOURCE_WEIGHTS[source] ?? confidence,
+            metadata: metadata
+        });
+    }
+
+    // 1. Structured data
+    (data.pageMetadata.structuredData || []).forEach(item => {
+
+        addEvidence(
+            item.name,
+            "structuredData",
+            0.95,
+            {
+                mediaType: item.type,
+                year: item.datePublished
+                    ? Number(item.datePublished.slice(0, 4))
+                    : null,
+                season: item.seasonNumber || null,
+                episode: item.episodeNumber || null
+            }
+        );
+    });
+
+    // 2. URL title parameter
+    const urlMetadata =
+        data.pageMetadata.urlMetadata;
+
+    if (urlMetadata?.title) {
+
+        addEvidence(
+            urlMetadata.title,
+            "urlParameter",
+            0.95,
+            {
+                providerId: urlMetadata.id || null,
+                mediaType: urlMetadata.type || null
+            }
+        );
+    }
+
+    // 3. URL identifier
+    if (urlMetadata?.id) {
+        evidence.push({
+            value: urlMetadata.id,
+            type: "identifier",
+            source: urlMetadata.source || "url",
+            confidence: 0.95,
+            metadata: {
+                mediaType: urlMetadata.type || null,
+                season: urlMetadata.season || null,
+                episode: urlMetadata.episode || null
+            }
+        });
+    }
+
+    // 4. Open Graph title
+    addEvidence(
+        data.pageMetadata.openGraph?.title,
+        "openGraph",
+        0.8
+    );
+
+    // 5. Twitter title
+    addEvidence(
+        data.pageMetadata.twitter?.title,
+        "twitter",
+        0.65
+    );
+
+    // 6. Page title
+    addEvidence(
+        data.pageMetadata.pageTitle,
+        "pageTitle",
+        0.5
+    );
+
+    // 7. Player headings
+    (data.playerContext || [])
+        .filter(item => item.level <= 3)
+        .forEach(item => {
+
+            (item.headings || []).forEach(heading => {
+
+                addEvidence(
+                    heading,
+                    "playerHeading",
+                    0.8,
+                    { ancestorLevel: item.level }
+                );
+            });
+        });
+
+    // 8. Player links
+    (data.playerLinks || []).forEach(link => {
+
+        addEvidence(
+            link.text,
+            "playerLink",
+            0.65,
+            { href: link.href }
+        );
+    });
+
+    // 9. Video filename or directory
+    const videoInfo = data.videoUrlInfo;
+
+    if (videoInfo?.possibleTitle) {
+
+        addEvidence(
+            videoInfo.possibleTitle,
+            videoInfo.titleSource || "videoAsset",
+            0.55,
+            {
+                year: videoInfo.possibleYear || null,
+                episode: videoInfo.episode || null
+            }
+        );
+    }
+
+    return deduplicateEvidence(evidence);
+}
+
+
+
 function rankTitleCandidates(data) {
 
     const candidates = [];
 
     const sourceWeights = {
         structuredData: 6,
+        urlParameter: 6,
         playerHeading: 3,
         playerLink: 3,
         filename: 3,
@@ -484,6 +1000,7 @@ function rankTitleCandidates(data) {
         "index",
         "example",
         "player",
+        "result",
         "more tutorials",
         "get certified"
     ];
@@ -557,14 +1074,14 @@ function rankTitleCandidates(data) {
         const cleanedTitle = title.trim();
 
         if (isInvalidTitle(cleanedTitle)) {
-        return;
+            return;
         }
 
         // Reject generic video filenames
         if (
             source === "filename" &&
             genericFilenameTitles.includes(
-            normalizeTitle(cleanedTitle)
+                normalizeTitle(cleanedTitle)
             )
         ) {
             return;
@@ -605,9 +1122,8 @@ function rankTitleCandidates(data) {
         });
     }
 
-
     // 1. JSON-LD evidence
-    data.pageMetadata.structuredData.forEach(item => {
+    (data.pageMetadata.structuredData || []).forEach(item => {
         addEvidence(
             item.name,
             "structuredData",
@@ -615,13 +1131,11 @@ function rankTitleCandidates(data) {
         );
     });
 
-
     // 2. Open Graph title
     addEvidence(
         data.pageMetadata.openGraph.title,
         "openGraph"
     );
-
 
     // 3. Twitter title
     addEvidence(
@@ -629,19 +1143,25 @@ function rankTitleCandidates(data) {
         "twitter"
     );
 
-
     // 4. Webpage title
     addEvidence(
         data.pageMetadata.pageTitle,
         "pageTitle"
     );
 
+    // 5. URL parameter evidence
+    addEvidence(
+        data.pageMetadata.urlMetadata?.title,
+        "urlParameter",
+        `URL ID: ${data.pageMetadata.urlMetadata?.id || "Not available"}, ` +
+        `Media type: ${data.pageMetadata.urlMetadata?.type || "Not available"}`
+    );
 
-    // 5. Nearby player headings
-    data.playerContext
+    // 6. Nearby player headings
+    (data.playerContext || [])
         .filter(item => item.level <= 3)
         .forEach(item => {
-            item.headings.forEach(heading => {
+            (item.headings || []).forEach(heading => {
                 addEvidence(
                     heading,
                     "playerHeading",
@@ -650,9 +1170,8 @@ function rankTitleCandidates(data) {
             });
         });
 
-
-    // 6. Nearby player links
-    data.playerLinks.forEach(link => {
+    // 7. Nearby player links
+    (data.playerLinks || []).forEach(link => {
         addEvidence(
             link.text,
             "playerLink",
@@ -660,8 +1179,7 @@ function rankTitleCandidates(data) {
         );
     });
 
-
-    // 7. Video filename or directory
+    // 8. Video filename or directory
     const urlInfo = data.videoUrlInfo;
 
     if (urlInfo.titleSource === "filename") {
@@ -680,67 +1198,56 @@ function rankTitleCandidates(data) {
         );
     }
 
-
     // Rank candidates by score
     candidates.sort((a, b) => b.score - a.score);
 
-    // Add descriptive evidence labels
-    
-// Group sources into broader evidence categories
-const sourceGroups = {
-    structuredData: "structuredData",
-
-    openGraph: "pageMetadata",
-    twitter: "pageMetadata",
-    pageTitle: "pageMetadata",
-
-    playerHeading: "playerContext",
-    playerLink: "playerContext",
-
-    filename: "videoAsset",
-    directory: "videoAsset"
-};
-
-
-// Add evidence levels and evidence summaries
-candidates.forEach(candidate => {
-
-    if (candidate.score >= 6) {
-        candidate.evidenceLevel = "Strong evidence";
-    } else if (candidate.score >= 3) {
-        candidate.evidenceLevel = "Some evidence";
-    } else {
-        candidate.evidenceLevel = "Weak clue";
-    }
-
-    // Collect distinct source names
-    const uniqueSources = [
-        ...new Set(
-            candidate.evidence.map(item => item.source)
-        )
-    ];
-
-    // Collect distinct evidence categories
-    const uniqueGroups = [
-        ...new Set(
-            uniqueSources.map(source => sourceGroups[source])
-                .filter(Boolean)
-        )
-    ];
-
-    candidate.evidenceSummary = {
-        sourceCount: uniqueSources.length,
-
-        sources: uniqueSources,
-
-        diversityCount: uniqueGroups.length,
-
-        categories: uniqueGroups
+    // Group sources into broader evidence categories
+    const sourceGroups = {
+        structuredData: "structuredData",
+        urlParameter: "pageMetadata",
+        openGraph: "pageMetadata",
+        twitter: "pageMetadata",
+        pageTitle: "pageMetadata",
+        playerHeading: "playerContext",
+        playerLink: "playerContext",
+        filename: "videoAsset",
+        directory: "videoAsset"
     };
 
-});
+    // Add evidence levels and evidence summaries
+    candidates.forEach(candidate => {
 
-return candidates;
+        if (candidate.score >= 6) {
+            candidate.evidenceLevel = "Strong evidence";
+        } else if (candidate.score >= 3) {
+            candidate.evidenceLevel = "Some evidence";
+        } else {
+            candidate.evidenceLevel = "Weak clue";
+        }
+
+        const uniqueSources = [
+            ...new Set(
+                candidate.evidence.map(item => item.source)
+            )
+        ];
+
+        const uniqueGroups = [
+            ...new Set(
+                uniqueSources.map(source => sourceGroups[source])
+                    .filter(Boolean)
+            )
+        ];
+
+        candidate.evidenceSummary = {
+            sourceCount: uniqueSources.length,
+            sources: uniqueSources,
+            diversityCount: uniqueGroups.length,
+            categories: uniqueGroups
+        };
+
+    });
+
+    return candidates;
 }
 
 
@@ -791,6 +1298,239 @@ function evaluateIdentification(candidates) {
 
 
 
+function rankTMDBResults(results, candidate, mediaType) {
+
+    if (!results || results.length === 0) {
+        return {
+            status: "no_results",
+            selectedCandidate: null,
+            rankedResults: []
+        };
+    }
+
+    // Normalize titles for comparison
+    const normalize = (title) => {
+        return (title || "")
+            .toLowerCase()
+            .replace(/[^\p{L}\p{N}\s]/gu, "")
+            .replace(/\s+/g, " ")
+            .trim();
+    };
+
+    const searchTitle = normalize(candidate.title);
+    const searchYear = candidate.year || null;
+
+    // Only use this when the ID has been verified as a TMDB ID
+    const verifiedTMDBId = candidate.tmdbId
+        ? String(candidate.tmdbId)
+        : null;
+
+    const rankedResults = results.map(item => {
+
+        const resultTitle = normalize(
+            mediaType === "movie" ? item.title : item.name
+        );
+
+        const originalTitle = normalize(
+            mediaType === "movie"
+                ? item.original_title
+                : item.original_name
+        );
+
+        const releaseDate = mediaType === "movie"
+            ? item.release_date
+            : item.first_air_date;
+
+        const resultYear = releaseDate
+            ? Number(releaseDate.slice(0, 4))
+            : null;
+
+        let score = 0;
+        const evidence = [];
+
+        // 1. Exact TMDB ID match
+        if (
+            verifiedTMDBId &&
+            String(item.id) === verifiedTMDBId
+        ) {
+            score += 100;
+            evidence.push("Exact verified TMDB ID match");
+        }
+
+        // 2. Compare displayed title
+        if (resultTitle === searchTitle) {
+            score += 10;
+            evidence.push("Exact title match");
+        }
+
+        // 3. Compare original title
+        if (originalTitle === searchTitle) {
+            score += 2;
+            evidence.push("Exact original title match");
+        }
+
+        // 4. Compare release year when available
+        if (searchYear && resultYear) {
+
+            if (searchYear === resultYear) {
+                score += 5;
+                evidence.push("Release year matches");
+            } else {
+                score -= 5;
+                evidence.push("Release year mismatch");
+            }
+        }
+
+        // 5. Check whether the overview contains useful information
+        const overview = (item.overview || "").trim();
+
+        if (
+            overview.length > 30 &&
+            !/honestly i don't know what to put here/i.test(overview)
+        ) {
+            score += 2;
+            evidence.push("Meaningful overview available");
+        }
+
+        // 6. Use vote count as a small supporting signal
+        if (item.vote_count >= 10) {
+            score += 1;
+            evidence.push("More than 10 votes");
+        }
+
+        return {
+            ...item,
+            matchScore: score,
+            matchEvidence: evidence,
+            matchedYear: resultYear
+        };
+    });
+
+    // Sort by matching score
+    rankedResults.sort(
+        (a, b) => b.matchScore - a.matchScore
+    );
+
+    const topResult = rankedResults[0];
+    const secondResult = rankedResults[1];
+
+    // Only one result exists
+    if (rankedResults.length === 1) {
+        return {
+            status: "needs_verification",
+            selectedCandidate: topResult,
+            rankedResults
+        };
+    }
+
+    const scoreDifference =
+        topResult.matchScore - secondResult.matchScore;
+
+    // Similar scores mean the results remain ambiguous
+    if (scoreDifference < 3) {
+        return {
+            status: "ambiguous",
+            selectedCandidate: null,
+            rankedResults
+        };
+    }
+
+    return {
+        status: "needs_verification",
+        selectedCandidate: topResult,
+        rankedResults
+    };
+}
+
+
+
+function buildTMDBVerification(match, sourceCandidate, mediaType) {
+
+    if (!match) {
+        return {
+            status: "no_match",
+            message: "No TMDB candidate available."
+        };
+    }
+
+    // Get the correct title fields based on media type
+    const tmdbTitle = mediaType === "movie"
+        ? match.title
+        : match.name;
+
+    const originalTitle = mediaType === "movie"
+        ? match.original_title
+        : match.original_name;
+
+    // Extract release date
+    const releaseDate = mediaType === "movie"
+        ? match.release_date
+        : match.first_air_date;
+
+    const releaseYear = releaseDate
+        ? Number(releaseDate.slice(0, 4))
+        : null;
+
+    // Normalize titles for comparison
+    function normalize(title) {
+        return (title || "")
+            .toLowerCase()
+            .replace(/[^\p{L}\p{N}\s]/gu, "")
+            .replace(/\s+/g, " ")
+            .trim();
+    }
+
+    // Compare extracted title with TMDB title
+    const exactTitleMatch =
+        normalize(sourceCandidate.title) === normalize(tmdbTitle);
+
+    const originalTitleMatch =
+        normalize(sourceCandidate.title) === normalize(originalTitle);
+
+    // Compare years only when both are available
+    const sourceYear = sourceCandidate.year || null;
+
+    let yearComparison = "unavailable";
+
+    if (sourceYear && releaseYear) {
+        yearComparison = sourceYear === releaseYear
+            ? "match"
+            : "mismatch";
+    }
+
+    // Prepare the verification report
+    return {
+        status: "awaiting_user_confirmation",
+
+        tmdb: {
+            id: match.id,
+            mediaType: mediaType,
+            title: tmdbTitle,
+            originalTitle: originalTitle,
+            releaseDate: releaseDate || null,
+            releaseYear: releaseYear,
+            overview: match.overview || "",
+            voteAverage: match.vote_average,
+            voteCount: match.vote_count
+        },
+
+        comparison: {
+            sourceTitle: sourceCandidate.title,
+            sourceYear: sourceYear,
+            exactTitleMatch: exactTitleMatch,
+            originalTitleMatch: originalTitleMatch,
+            yearComparison: yearComparison
+        },
+
+        ranking: {
+            score: match.matchScore,
+            evidence: match.matchEvidence
+        }
+    };
+}
+
+
+
 function buildIdentificationData(video) {
 
     // 1. Extract basic video information
@@ -823,15 +1563,32 @@ function buildIdentificationData(video) {
         playerLinks,
         videoUrlInfo,
 
+        // New: store all collected evidence
+        evidence: [],
+
+        // Keep the old pipeline temporarily
         titleCandidates: [],
         identificationResult: null
     };
 
-    // 7. Consolidate and rank title evidence
+    // 7. Collect evidence from different sources
+    identificationData.evidence =
+        collectEvidence(identificationData);
+
+    // 8. Rank collected title evidence
+    identificationData.rankedEvidence =
+        rankTitleEvidence(identificationData.evidence);
+
+    // 9. Evaluate ranked title evidence
+    identificationData.evidenceResult =
+        evaluateRankedEvidence(
+            identificationData.rankedEvidence
+        );
+
+    // 10. Existing identification pipeline
     identificationData.titleCandidates =
         rankTitleCandidates(identificationData);
 
-    // 8. Evaluate the candidates
     identificationData.identificationResult =
         evaluateIdentification(
             identificationData.titleCandidates
@@ -842,21 +1599,28 @@ function buildIdentificationData(video) {
 
 
 // Detect video elements
+
 function detectVideos() {
+
     const videos = document.querySelectorAll("video");
 
     videos.forEach((video) => {
+
         if (detectedVideos.has(video)) {
             return;
         }
 
+        // Mark this video as detected
         detectedVideos.add(video);
 
         console.log("Video detected:", video);
 
+        // Listen for video playback
         video.addEventListener("play", () => {
+
             console.log("VIDEO STARTED");
 
+            // Step 1: Collect identification information
             const identificationData =
                 buildIdentificationData(video);
 
@@ -865,18 +1629,298 @@ function detectVideos() {
                 identificationData
             );
 
+            // ------------------------------------------------
+            // METHOD 1: DIRECT IDENTIFICATION USING URL ID
+            // ------------------------------------------------
+
+            const urlMetadata =
+                identificationData.pageMetadata.urlMetadata;
+
+            // Function to retrieve movie details using an ID
+            function requestMovieDetails(movieId, expectedTitle) {
+
+                console.log("DIRECT TMDB LOOKUP:", {
+                    movieId: movieId,
+                    title: expectedTitle
+                });
+
+                chrome.runtime.sendMessage(
+                    {
+                        type: "TMDB_MOVIE_DETAILS",
+                        movieId: Number(movieId)
+                    },
+                    (response) => {
+
+                        if (chrome.runtime.lastError) {
+                            console.error(
+                                "MOVIE DETAILS MESSAGE ERROR:",
+                                chrome.runtime.lastError.message
+                            );
+
+                            // Fall back to title search
+                            searchByTitle();
+                            return;
+                        }
+
+                        if (!response || !response.success) {
+                            console.error(
+                                "DIRECT TMDB LOOKUP FAILED:",
+                                response?.error || "Unknown error"
+                            );
+
+                            // Fall back to title search
+                            searchByTitle();
+                            return;
+                        }
+
+                        const movie = response.data;
+
+                        console.log(
+                            "DIRECT TMDB MOVIE DETAILS:",
+                            movie
+                        );
+
+                        // Normalize titles before comparison
+                        const normalize = (value) =>
+                            (value || "")
+                                .toLowerCase()
+                                .replace(/[^\p{L}\p{N}\s]/gu, "")
+                                .replace(/\s+/g, " ")
+                                .trim();
+
+                        // Verify title only when one is available
+                        const titleMatches = expectedTitle
+                            ? normalize(movie.title) ===
+                              normalize(expectedTitle)
+                            : true;
+
+                        if (!titleMatches) {
+
+                            console.warn(
+                                "MOVIE TITLE MISMATCH:",
+                                {
+                                    urlTitle: expectedTitle,
+                                    tmdbTitle: movie.title
+                                }
+                            );
+
+                            // Do not trust the ID if titles differ
+                            searchByTitle();
+                            return;
+                        }
+
+                        // Display the retrieved movie information
+                        const movieDetails = {
+                            id: movie.id,
+                            title: movie.title,
+                            releaseDate: movie.release_date,
+                            runtime: movie.runtime,
+                            genres: (movie.genres || []).map(
+                                genre => genre.name
+                            )
+                        };
+
+                        if (expectedTitle) {
+
+                            console.log(
+                                "TMDB MOVIE VERIFIED:",
+                                movieDetails
+                            );
+
+                        } else {
+
+                            console.log(
+                                "TMDB MOVIE DETAILS RETRIEVED - TITLE VERIFICATION PENDING:",
+                                movieDetails
+                            );
+
+                        }
+
+                    }
+                );
+            }
+
+
+            // ------------------------------------------------
+            // METHOD 2: FALLBACK USING TITLE SEARCH
+            // ------------------------------------------------
+
+            function searchByTitle() {
+
+                console.log(
+                    "USING TITLE-BASED IDENTIFICATION"
+                );
+
+                // Get the new evidence-based identification result
+                const result =
+                    identificationData.evidenceResult;
+
+                // Check whether we have a usable candidate
+                if (
+                    result.status !== "needs_verification" ||
+                    !result.selectedCandidate
+                ) {
+                    console.log(
+                        "TMDB SEARCH SKIPPED:",
+                        "No sufficiently clear title candidate."
+                    );
+
+                    return;
+                }
+
+                // Get the selected title
+                const title = result.selectedCandidate.value;
+
+                // Decide whether to search movies or TV shows
+                const mediaType =
+                    urlMetadata?.type === "tv" ||
+                    identificationData.videoUrlInfo.episode
+                        ? "tv"
+                        : "movie";
+
+                console.log("TMDB SEARCH REQUEST:", {
+                    title: title,
+                    mediaType: mediaType
+                });
+
+
+                // Send the search request to background.js
+                chrome.runtime.sendMessage(
+                    {
+                        type: "TMDB_SEARCH",
+                        mediaType: mediaType,
+                        query: title
+                    },
+                    (response) => {
+
+                        if (chrome.runtime.lastError) {
+                            console.error(
+                                "EXTENSION MESSAGE ERROR:",
+                                chrome.runtime.lastError.message
+                            );
+
+                            return;
+                        }
+
+                        if (!response || !response.success) {
+                            console.error(
+                                "TMDB SEARCH FAILED:",
+                                response?.error || "Unknown error"
+                            );
+
+                            return;
+                        }
+
+                        // Display TMDB search results
+                        console.log(
+                            "TMDB SEARCH RESULTS:",
+                            response.data
+                        );
+
+                        // Rank the TMDB results
+                        const rankingResult = rankTMDBResults(
+                            response.data.results,
+                            {
+                                title: title,
+                                year: identificationData
+                                    .videoUrlInfo.possibleYear,
+                                tmdbId: null
+                            },
+                            mediaType
+                        );
+
+                        console.log(
+                            "TMDB RANKING RESULT:",
+                            rankingResult
+                        );
+
+                        console.log(
+                            "BEST TMDB MATCH:",
+                            rankingResult.selectedCandidate
+                        );
+
+                        // Build the verification report
+                        const verificationReport =
+                            buildTMDBVerification(
+                                rankingResult.selectedCandidate,
+                                {
+                                    title: title,
+                                    year: identificationData
+                                        .videoUrlInfo.possibleYear
+                                },
+                                mediaType
+                            );
+
+                        console.log(
+                            "TMDB VERIFICATION REPORT:",
+                            verificationReport
+                        );
+
+                        // Request details if a movie match is available
+                        if (
+                            verificationReport.status ===
+                                "awaiting_user_confirmation" &&
+                            verificationReport.tmdb &&
+                            verificationReport.tmdb.mediaType === "movie"
+                        ) {
+
+                            requestMovieDetails(
+                                verificationReport.tmdb.id,
+                                title
+                            );
+
+                        }
+
+                    }
+                );
+            }
+
+
+            // ------------------------------------------------
+            // DECIDE WHICH IDENTIFICATION METHOD TO USE
+            // ------------------------------------------------
+
+            if (
+                urlMetadata &&
+                urlMetadata.id &&
+                urlMetadata.type === "movie" &&
+                /^\d+$/.test(urlMetadata.id)
+            ) {
+
+                console.log(
+                    "MOVIE ID FOUND IN STREAMING URL:",
+                    urlMetadata
+                );
+
+                requestMovieDetails(
+                    urlMetadata.id,
+                    urlMetadata.title
+                );
+
+            } else {
+
+                console.log(
+                    "NO USABLE MOVIE ID IN URL."
+                );
+
+                // Use the existing title-based pipeline
+                searchByTitle();
+
+            }
+
         });
 
+        // Listen for video pause
         video.addEventListener("pause", () => {
             console.log("VIDEO PAUSED");
         });
+
     });
 }
 
 
 // Detect existing videos
 detectVideos();
-
 
 // Detect dynamically added videos
 const observer = new MutationObserver(() => {
@@ -887,31 +1931,3 @@ observer.observe(document.documentElement, {
     childList: true,
     subtree: true
 });
-
-
-
-const conflictTest = [
-    {
-        title: "Interstellar",
-        normalizedTitle: "interstellar",
-        score: 9,
-        evidence: [
-            { source: "openGraph", weight: 3 },
-            { source: "playerLink", weight: 3 }
-        ]
-    },
-    {
-        title: "Inception",
-        normalizedTitle: "inception",
-        score: 3,
-        evidence: [
-            { source: "filename", weight: 3 },
-            { source: "directory", weight: 2 }
-        ]
-    }
-];
-
-console.log(
-    "EMPTY TEST:",
-    evaluateIdentification([])
-);
